@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
+import openai.error
 
 # Загружаем переменные окружения из .env
 load_dotenv()
@@ -17,35 +18,40 @@ if not OPENAI_API_KEY:
 
 openai.api_key = OPENAI_API_KEY
 
-# Подключение к базе данных SQLite
 DB_PATH = "conversations.db"
+ARCHIVE_DB_PATH = "history.db"
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
-# Инициализация FastAPI
 app = FastAPI()
 
-# Создаём таблицу, если её нет
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS dialogs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                message TEXT,
-                bot_response TEXT,
-                status TEXT DEFAULT "active",
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-        logging.info("✅ База данных инициализирована.")
+    for db in [DB_PATH, ARCHIVE_DB_PATH]:
+        with sqlite3.connect(db) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS dialogs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    message TEXT,
+                    bot_response TEXT,
+                    status TEXT DEFAULT "active",
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+
+            logging.info(f"✅ База данных инициализирована: {db}")
 
 init_db()
 
-# Определяем модель данных
 class UserMessage(BaseModel):
     user_id: int
     message: str
@@ -98,11 +104,8 @@ PROMPT_TEMPLATE = """
 """
 
 def get_gpt_response(user_id: int, message: str) -> str:
-    """Запрашивает ответ у OpenAI и сохраняет историю в базе SQLite."""
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-
-        # Получаем историю общения пользователя
         cursor.execute(
             "SELECT message, bot_response FROM dialogs WHERE user_id = ? AND status = 'active'",
             (user_id,)
@@ -118,30 +121,35 @@ def get_gpt_response(user_id: int, message: str) -> str:
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
                     {"role": "user", "content": prompt}
-                ]
+                ],
+                timeout=30
             )
             bot_reply = response["choices"][0]["message"]["content"]
-
-            # Сохраняем в базу данных
             cursor.execute(
                 "INSERT INTO dialogs (user_id, message, bot_response, status) VALUES (?, ?, ?, 'active')",
                 (user_id, message, bot_reply)
             )
             conn.commit()
-
             return bot_reply
+        except openai.error.Timeout as e:
+            logging.error(f"⏳ Таймаут от OpenAI: {e}")
+            raise HTTPException(status_code=504, detail="Таймаут от OpenAI.")
+        except openai.error.RateLimitError as e:
+            logging.error(f"🚦 Превышен лимит OpenAI: {e}")
+            raise HTTPException(status_code=429, detail="Превышен лимит OpenAI.")
+        except openai.error.OpenAIError as e:
+            logging.error(f"❌ Ошибка OpenAI: {e}")
+            raise HTTPException(status_code=500, detail="Ошибка OpenAI.")
         except Exception as e:
-            logging.error(f"Ошибка при запросе к OpenAI: {e}")
-            raise HTTPException(status_code=500, detail="Ошибка обработки запроса к OpenAI.")
+            logging.error(f"⚠️ Общая ошибка: {e}")
+            raise HTTPException(status_code=500, detail="Непредвиденная ошибка.")
 
 @app.post("/chat")
 def chat_with_bot(user_message: UserMessage):
-    """Обрабатывает сообщение пользователя и сохраняет историю в базе данных."""
     return {"response": get_gpt_response(user_message.user_id, user_message.message)}
 
 @app.get("/check_dialog")
 def check_dialog(user_id: int):
-    """Проверяет, есть ли у пользователя активный диалог."""
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -149,24 +157,19 @@ def check_dialog(user_id: int):
             (user_id,)
         )
         active_dialogs = cursor.fetchone()[0]
-
     return {"status": "active" if active_dialogs > 0 else "not_found"}
 
 @app.post("/end_dialog")
 def end_dialog(user_id: int):
-    """Завершает текущий диалог и создаёт сводку."""
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-
         cursor.execute(
             "UPDATE dialogs SET status = 'finished' WHERE user_id = ? AND status = 'active'",
             (user_id,)
         )
         conn.commit()
-
-        # Получаем историю сообщений
         cursor.execute(
-            "SELECT message, bot_response FROM dialogs WHERE user_id = ? AND status = 'finished'",
+            "SELECT user_id, message, bot_response, status, created_at FROM dialogs WHERE user_id = ? AND status = 'finished'",
             (user_id,)
         )
         messages = cursor.fetchall()
@@ -174,6 +177,25 @@ def end_dialog(user_id: int):
     if not messages:
         return {"error": "Нет завершённых диалогов"}
 
+    # Копирование в архивную БД
+    with sqlite3.connect(ARCHIVE_DB_PATH) as archive_conn:
+        archive_cursor = archive_conn.cursor()
+        archive_cursor.executemany(
+            "INSERT INTO dialogs (user_id, message, bot_response, status, created_at) VALUES (?, ?, ?, ?, ?)",
+            messages
+        )
+        archive_conn.commit()
+
+    # Очистка из основной БД
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM dialogs WHERE user_id = ? AND status = 'finished'",
+            (user_id,)
+        )
+        conn.commit()
+
+    # Сводка
     summary_prompt = f"""
     Вот история диалога с пользователем:
     {messages}
@@ -187,11 +209,19 @@ def end_dialog(user_id: int):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": summary_prompt}]
+            messages=[{"role": "system", "content": summary_prompt}],
+            timeout=30
         )
         summary = response["choices"][0]["message"]["content"]
+    except openai.error.Timeout as e:
+        logging.error(f"⏳ Таймаут при генерации сводки: {e}")
+        summary = "Ошибка: превышено время ожидания."
+    except openai.error.OpenAIError as e:
+        logging.error(f"❌ Ошибка при генерации сводки: {e}")
+        summary = f"Ошибка OpenAI: {str(e)}"
     except Exception as e:
-        summary = f"Ошибка при генерации сводки: {str(e)}"
+        logging.error(f"⚠️ Общая ошибка генерации сводки: {e}")
+        summary = f"Ошибка: {str(e)}"
 
     return {"message": "Диалог завершён", "summary": summary}
 

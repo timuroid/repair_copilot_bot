@@ -17,7 +17,15 @@ load_dotenv()
 API_URL = os.getenv("API_URL")
 
 # Логирование
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+
 logger = logging.getLogger(__name__)
 
 # Определяем состояния диалога
@@ -31,14 +39,12 @@ def convert_markdown_to_html(text: str) -> str:
     text = re.sub(r"\n- ", r"\n• ", text)  # Преобразуем списки (Markdown → HTML-friendly)
     return text
 
-# Функция для создания Inline Keyboard с кнопкой "Проблема решена"
 def get_inline_keyboard():
     keyboard = [[InlineKeyboardButton("✅ Проблема решена", callback_data="end_dialog")]]
     return InlineKeyboardMarkup(keyboard)
 
 # Асинхронный обработчик команды /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет приветственное сообщение с кнопкой для начала работы."""
     keyboard = [[InlineKeyboardButton("Разобраться с проблемой", callback_data="start_dialog")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -51,7 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Асинхронный обработчик начала диалога
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает новый диалог, создаёт запись на сервере."""
     if update.callback_query:
         query = update.callback_query
         await query.answer()
@@ -59,7 +64,8 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         user_id = update.effective_user.id
 
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(15.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(f"{API_URL}/chat", json={"user_id": user_id, "message": ""})
             response.raise_for_status()
@@ -78,25 +84,38 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
             return TYPING_REPLY
+        except httpx.TimeoutException:
+            logger.error("Таймаут при подключении к серверу.")
+            await update.message.reply_text(
+                "❌ Сервер не отвечает (таймаут). Попробуйте позже.",
+                parse_mode="HTML"
+            )
         except httpx.RequestError as e:
             logger.error(f"Ошибка при подключении к серверу: {e}")
             await update.message.reply_text(
                 "❌ Ошибка при подключении к серверу. Попробуйте позже.",
                 parse_mode="HTML"
             )
-            return ConversationHandler.END
+        return ConversationHandler.END
 
 # Асинхронный обработчик входящих сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сообщение пользователя и отправляет его в FastAPI."""
     user_id = update.effective_user.id
     user_message = update.message.text
 
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(15.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.get(f"{API_URL}/check_dialog", params={"user_id": user_id})
             response.raise_for_status()
             dialog_status = response.json().get("status", "not_found")
+        except httpx.TimeoutException:
+            logger.error("Таймаут при проверке диалога.")
+            await update.message.reply_text(
+                "❌ Сервер не отвечает. Попробуйте позже.",
+                parse_mode="HTML"
+            )
+            return ConversationHandler.END
         except httpx.RequestError as e:
             logger.error(f"Ошибка запроса: {e}")
             await update.message.reply_text(
@@ -117,12 +136,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(f"{API_URL}/chat", json={"user_id": user_id, "message": user_message})
             response.raise_for_status()
             bot_reply = response.json().get("response", "Ошибка обработки ответа.")
-            formatted_reply = convert_markdown_to_html(bot_reply)  # Преобразуем Markdown в HTML
+            formatted_reply = convert_markdown_to_html(bot_reply)
 
             await msg.edit_text(
                 formatted_reply,
@@ -130,30 +149,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
             return TYPING_REPLY
+        except httpx.TimeoutException:
+            logger.error("Таймаут при генерации ответа от сервера.")
+            await msg.edit_text(
+                "❌ Время ожидания ответа вышло. Попробуйте позже.",
+                parse_mode="HTML"
+            )
         except httpx.RequestError as e:
             logger.error(f"Ошибка запроса: {e}")
             await msg.edit_text(
                 "❌ Ошибка при обработке запроса. Попробуйте позже.",
                 parse_mode="HTML"
             )
-            return ConversationHandler.END
+        return ConversationHandler.END
 
 # Асинхронный обработчик завершения диалога
 async def end_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Завершает диалог и сразу предлагает начать новый."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
 
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(15.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(f"{API_URL}/end_dialog", params={"user_id": user_id})
             summary = response.json().get("summary", "Ошибка при генерации сводки.")
+        except httpx.TimeoutException:
+            logger.error("Таймаут при завершении диалога.")
+            summary = "Ошибка: превышено время ожидания."
         except httpx.RequestError as e:
             logger.error(f"Ошибка завершения диалога: {e}")
             summary = "Ошибка при обработке запроса."
 
-    formatted_summary = convert_markdown_to_html(summary)  # Преобразуем Markdown в HTML
+    formatted_summary = convert_markdown_to_html(summary)
 
     await query.edit_message_text(
         f"✅ Диалог завершён!\n\n📌 <b>Сводка:</b>\n{formatted_summary}\n\nГотовы начать новую диагностику?",
@@ -164,9 +192,7 @@ async def end_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Функция main для запуска бота
 def main():
-    """Запуск Telegram-бота."""
-    token = os.getenv("TELEGRAM_API_TOKEN", "7584175600:AAGT2d_ypZDzInzYJ_xf8SHhKmT-Pit83UM")
-
+    token = os.getenv("TELEGRAM_API_TOKEN")
     application = ApplicationBuilder().token(token).build()
 
     conv_handler = ConversationHandler(
