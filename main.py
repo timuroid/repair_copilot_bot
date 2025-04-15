@@ -1,5 +1,6 @@
 import os
 import openai
+from openai import OpenAI
 import sqlite3
 import logging
 from dotenv import load_dotenv
@@ -16,10 +17,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("❌ API-ключ OpenAI не найден! Укажите его в файле .env")
 
-openai = openai.OpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url="https://llm.api.cloud.yandex.net/v1"
-)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 DB_PATH = "conversations.db"
@@ -372,11 +370,11 @@ def generate_hypotheses(history: str, user_message: str) -> str:
 """
 
     response = openai.chat.completions.create(
-        model="gpt://b1g52qmqktt7evffsd5c/yandexgpt/rc",
+        model="gpt-4o",
         messages=[{"role": "system", "content": HYPOTHESIS_SYSTEM_PROMPT},
                   {"role": "user", "content": prompt}],
         temperature=0.6,
-        timeout=20
+        
     )
 
     return response.choices[0].message.content.strip()
@@ -403,13 +401,13 @@ def get_gpt_response(user_id: int, message: str) -> str:
 
         try:
             response = openai.chat.completions.create(
-                model="gpt://b1g52qmqktt7evffsd5c/yandexgpt/rc",
+                model="gpt-4o",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.6,
-                timeout=30
+               
             )
             bot_reply = response.choices[0].message.content
             cursor.execute(
@@ -492,9 +490,9 @@ def end_dialog(user_id: int):
 
     try:
         response = openai.chat.completions.create(
-            model="gpt://b1g52qmqktt7evffsd5c/yandexgpt/rc",
+            model="gpt-4o",
             messages=[{"role": "system", "content": summary_prompt}],
-            timeout=30
+            
         )
         summary = response.choices[0].message.content
     except OpenAIError as e:

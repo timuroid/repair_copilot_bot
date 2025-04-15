@@ -64,7 +64,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         user_id = update.effective_user.id
 
-    timeout = httpx.Timeout(15.0)
+    timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(f"{API_URL}/chat", json={"user_id": user_id, "message": ""})
@@ -103,7 +103,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
 
-    timeout = httpx.Timeout(15.0)
+    timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.get(f"{API_URL}/check_dialog", params={"user_id": user_id})
@@ -169,7 +169,7 @@ async def end_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = query.from_user.id
 
-    timeout = httpx.Timeout(15.0)
+    timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             response = await client.post(f"{API_URL}/end_dialog", params={"user_id": user_id})
