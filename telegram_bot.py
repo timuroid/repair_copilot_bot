@@ -36,6 +36,7 @@ def convert_markdown_to_html(text: str) -> str:
     """Конвертирует Markdown-разметку от ChatGPT в HTML-разметку для Telegram."""
     text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)  # **Жирный текст** → <b>Жирный текст</b>
     text = re.sub(r"\*(.*?)\*", r"<i>\1</i>", text)  # *Курсив* → <i>Курсив</i>
+    text = re.sub(r"^### (.*?)$", r"<b><u>\1</u></b>", text, flags=re.MULTILINE)
     text = re.sub(r"\n- ", r"\n• ", text)  # Преобразуем списки (Markdown → HTML-friendly)
     return text
 
