@@ -17,7 +17,10 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError("❌ API-ключ OpenAI не найден! Укажите его в файле .env")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENAI_API_KEY,
+    )
 
 
 DB_PATH = "conversations.db"
@@ -369,8 +372,8 @@ def generate_hypotheses(history: str, user_message: str) -> str:
 - Гипотезы пиши кратко, с нребольшими пояснениямий
 """
 
-    response = openai.chat.completions.create(
-        model="gpt-4o",
+    response = client.chat.completions.create(
+        model="deepseek/deepseek-chat-v3-0324",
         messages=[{"role": "system", "content": HYPOTHESIS_SYSTEM_PROMPT},
                   {"role": "user", "content": prompt}],
         temperature=0.6,
@@ -400,8 +403,8 @@ def get_gpt_response(user_id: int, message: str) -> str:
         prompt = PROMPT_TEMPLATE.format(history=formatted_history, user_message=message, hypotheses=hypotheses)
 
         try:
-            response = openai.chat.completions.create(
-                model="gpt-4o",
+            response = client.chat.completions.create(
+                model="deepseek/deepseek-chat-v3-0324",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE},
                     {"role": "user", "content": prompt}
@@ -489,8 +492,8 @@ def end_dialog(user_id: int):
     """
 
     try:
-        response = openai.chat.completions.create(
-            model="gpt-4o",
+        response = client.chat.completions.create(
+            model="deepseek/deepseek-chat-v3-0324",
             messages=[{"role": "system", "content": summary_prompt}],
             
         )
