@@ -154,14 +154,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(f"{API_URL}/chat", json={"user_id": user_id, "message": user_message})
         response.raise_for_status()
-        bot_reply = response.json().get("response", "Ошибка обработки ответа.")
-        formatted_reply = convert_markdown_to_html(bot_reply)
+        bot_reply = response.json().get("response", "").strip()
 
-        await msg.edit_text(
-            formatted_reply,
-            reply_markup=get_inline_keyboard(),
-            parse_mode="HTML"
-        )
+    if not bot_reply:
+        logging.warning(f"⚠️ GPT вернул пустую строку для user_id={user_id}")
+        safe_text = " "  # Юникод U+200E (невидимый символ)
+    else:
+        safe_text = convert_markdown_to_html(bot_reply)
+
+    await msg.edit_text(
+        safe_text,
+        reply_markup=get_inline_keyboard(),
+        parse_mode="HTML"
+    )   
 
     # 💾 Сохраняем ID последнего сообщения с кнопкой
     context.user_data["last_bot_message_id"] = msg.message_id
