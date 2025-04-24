@@ -1,18 +1,17 @@
 import os
 import logging
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from app import db
+from app.db import DialogDB, MessageDB
 from app import gpt_service
+from app.gpt_service import clear_tree
 
-# Загружаем переменные окружения из .env
+# Загрузка переменных окружения
 load_dotenv()
 
-# Инициализируем FastAPI-приложение
 app = FastAPI()
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -22,33 +21,67 @@ logging.basicConfig(
     ]
 )
 
-# Инициализация базы данных
-db.init_db()
+DialogDB.init()
 
-# Модель запроса пользователя
 class UserMessage(BaseModel):
     user_id: int
     message: str
 
+@app.post("/force_end_dialog")
+def force_end_dialog(user_id: int):
+    dialog_id = DialogDB.get_active_dialog_id(user_id)
+    if dialog_id:
+        DialogDB.finish_dialog(user_id)
+        clear_tree(user_id)
+    return {"message": "Диалог завершён без генерации сводки"}
+
+
+@app.post("/start_dialog")
+def start_dialog(user_id: int):
+    DialogDB.finish_dialog(user_id)
+    clear_tree(user_id)
+    dialog_id = DialogDB.create_dialog(user_id)
+    return {"message": "Диалог инициализирован", "dialog_id": dialog_id}
+
 @app.post("/chat")
 def chat_with_bot(user_message: UserMessage):
-    history = db.fetch_dialog_history(user_message.user_id)
+    dialog_id = DialogDB.get_active_dialog_id(user_message.user_id)
+    if not dialog_id:
+        raise HTTPException(status_code=400, detail="Нет активного диалога. Сначала вызовите /start_dialog.")
+
+    history = MessageDB.fetch_dialog_history(dialog_id)
+    gpt_service.generate_hypotheses(user_message.user_id, user_message.message, history)
     response = gpt_service.generate_response(user_message.user_id, history, user_message.message)
-    db.save_dialog_entry(user_message.user_id, user_message.message, response)
+
+    # 💾 Сохраняем роли корректно
+    MessageDB.save(dialog_id, "user", user_message.message)
+    MessageDB.save(dialog_id, "bot", response)
+
     return {"response": response}
 
 @app.get("/check_dialog")
 def check_dialog(user_id: int):
-    return {"status": db.check_dialog_status(user_id)}
+    dialog_id = DialogDB.get_active_dialog_id(user_id)
+    return {"active": bool(dialog_id), "dialog_id": dialog_id}
+
+from fastapi import HTTPException
+from app.db import DialogDB, MessageDB  # Убедись, что MessageDB импортирован
 
 @app.post("/end_dialog")
 def end_dialog(user_id: int):
-    messages = db.finish_dialog(user_id)
-    if not messages:
-        return {"error": "Нет завершённых диалогов"}
+    dialog_id = DialogDB.get_active_dialog_id(user_id)
+    if not dialog_id:
+        raise HTTPException(status_code=400, detail="Нет активного диалога")
 
-    summary = gpt_service.generate_summary(messages)
+    history = MessageDB.fetch_dialog_history(dialog_id)
+    if not history:
+        raise HTTPException(status_code=400, detail="Нет сообщений в диалоге")
+
+    DialogDB.finish_dialog(user_id)
+
+    summary = gpt_service.generate_summary(history)
     return {"message": "Диалог завершён", "summary": summary}
+
 
 if __name__ == "__main__":
     import uvicorn

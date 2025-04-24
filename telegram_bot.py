@@ -85,12 +85,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    timeout = httpx.Timeout(120.0)
+
     if update.callback_query:
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
 
-        # Удаляем старую кнопку (если была)
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=query.message.chat_id,
@@ -99,28 +100,26 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except:
             pass
-        
-        # ➕ Добавляем рамку начала
-        await query.message.reply_text("╔═══════════════════╗")    
 
-        # Отправляем новое сообщение без кнопок
-        await query.message.reply_text(
-            START_MESSAGE,
-            parse_mode="HTML"
-        )
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # 💥 Завершаем старый диалог без генерации сводки
+            await client.post(f"{API_URL}/force_end_dialog", params={"user_id": user_id})
+            # 🆕 Стартуем новый диалог
+            await client.post(f"{API_URL}/start_dialog", params={"user_id": user_id})
+
+        await query.message.reply_text("╔═══════════════════╗")
+        await query.message.reply_text(START_MESSAGE, parse_mode="HTML")
+        return TYPING_REPLY
+
     else:
         user_id = update.effective_user.id
-        await update.message.reply_text(
-            START_MESSAGE,
-            parse_mode="HTML"
-        )
+        await update.message.reply_text(START_MESSAGE, parse_mode="HTML")
 
-    # Инициализируем диалог на сервере
-    timeout = httpx.Timeout(120.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        await client.post(f"{API_URL}/chat", json={"user_id": user_id, "message": ""})
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            await client.post(f"{API_URL}/force_end_dialog", params={"user_id": user_id})
+            await client.post(f"{API_URL}/start_dialog", params={"user_id": user_id})
 
-    return TYPING_REPLY
+        return TYPING_REPLY
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,14 +129,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     timeout = httpx.Timeout(120.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(f"{API_URL}/check_dialog", params={"user_id": user_id})
-        response.raise_for_status()
-        dialog_status = response.json().get("status", "not_found")
+        dialog_data = response.json()
 
-    if dialog_status in ["not_found", "finished"]:
-        await update.message.reply_text(
-            "Вы ещё не начинали диалог. Запускаю новый...",
-            parse_mode="HTML"
-        )
+    if not dialog_data.get("active"):
+        await update.message.reply_text("Вы ещё не начинали диалог. Запускаю новый...", parse_mode="HTML")
         return await start_dialog(update, context)
 
     # 🧹 Удаление предыдущих кнопок, если они есть
