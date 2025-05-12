@@ -1,3 +1,5 @@
+#telegram_bot.py
+
 import logging
 import os
 import httpx
@@ -31,7 +33,6 @@ CHOOSING, TYPING_REPLY = range(2)
 WELCOME_MESSAGE = """
 <b>🤖 Добро пожаловать!</b>
 
-<u>Вот как эффективно работать с ботом</u> 👇
 
 <b>🔹 1. Чётко формулируйте проблему</b>  
 <pre>❌ «Не работает линия»
@@ -46,10 +47,6 @@ WELCOME_MESSAGE = """
 <pre>❌  «Ну просто встал и всё»
 ✅ «Перед остановкой появился резкий запах гари»</pre>
 
-
-<b>📌 Бот — не диспетчер, а аналитик.</b>  
-
-<u>Чем точнее</u> описание  — <u>тем лучше</u> результат
 """
 
 START_MESSAGE = """
@@ -107,7 +104,7 @@ async def start_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # 🆕 Стартуем новый диалог
             await client.post(f"{API_URL}/start_dialog", params={"user_id": user_id})
 
-        await query.message.reply_text("╔═══════════════════╗")
+        #await query.message.reply_text("╔═══════════════════╗")
         await query.message.reply_text(START_MESSAGE, parse_mode="HTML")
         return TYPING_REPLY
 
@@ -197,7 +194,7 @@ async def end_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass  # если сообщение уже изменено/удалено
     
     # ➕ Добавляем рамку завершения
-    await query.message.reply_text("╚═══════════════════╝")
+    # await query.message.reply_text("╚═══════════════════╝")
 
     # 📩 Отправляем новое сообщение со сводкой
     await query.message.reply_text(

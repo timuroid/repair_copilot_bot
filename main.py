@@ -1,3 +1,5 @@
+#main.py
+
 import os
 import logging
 from dotenv import load_dotenv
@@ -64,8 +66,6 @@ def check_dialog(user_id: int):
     dialog_id = DialogDB.get_active_dialog_id(user_id)
     return {"active": bool(dialog_id), "dialog_id": dialog_id}
 
-from fastapi import HTTPException
-from app.db import DialogDB, MessageDB  # Убедись, что MessageDB импортирован
 
 @app.post("/end_dialog")
 def end_dialog(user_id: int):
