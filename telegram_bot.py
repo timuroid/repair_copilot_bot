@@ -31,9 +31,6 @@ logger = logging.getLogger(__name__)
 CHOOSING, TYPING_REPLY = range(2)
 
 WELCOME_MESSAGE = """
-<b>🤖 Добро пожаловать!</b>
-
-
 <b>🔹 1. Чётко формулируйте проблему</b>  
 <pre>❌ «Не работает линия»
 ✅ «Линия остановилась после резки, был щелчок»</pre>
@@ -47,10 +44,13 @@ WELCOME_MESSAGE = """
 <pre>❌  «Ну просто встал и всё»
 ✅ «Перед остановкой появился резкий запах гари»</pre>
 
+
+<b>Чтобы открыть диалог нажмите кнопку<b>
+⬇️⬇️⬇️
 """
 
 START_MESSAGE = """
-🟢 <b>Диалог начат.</b>
+🟢 <b>Диалог открыт.</b>
 
 Подробно опишите проблему 
 """
@@ -198,7 +198,7 @@ async def end_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 📩 Отправляем новое сообщение со сводкой
     await query.message.reply_text(
-        f"🏁<b>Диалог завершён!</b>\n\n📌 <b>Сводка:</b>\n{formatted_summary}\n\nГотовы начать новую диагностику?",
+        f"🏁<b>Диалог завершён!</b>\n\n📌 <b>Сводка:</b>\n{formatted_summary}\n\n<b>Чтобы открыть диалог нажмите кнопку<b>\n⬇️⬇️⬇️",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔧 Разобраться с проблемой", callback_data="start_dialog")]]
         ),
